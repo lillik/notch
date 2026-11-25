@@ -1,22 +1,22 @@
 # URL Shortener
 
-Aplicație Slim 4. Linkurile sunt anonime: nu există `user_id`. Același `long_url` primește de fiecare dată un cod nou. Domeniul depinde de interfețe; PDO, Redis și RabbitMQ stau în infrastructură.
+Slim 4 application. Links are anonymous: there is no `user_id`. The same `long_url` receives a new code every time. The domain depends on interfaces. PDO, Redis, and RabbitMQ stay in infrastructure.
 
-## Structura
+## Structure
 
 ```
 shortUrl/
 ├── src/
 │   ├── Domain/
 │   │   ├── Entity/
-│   │   │   ├── Link.php                  agregat: code, longUrl, createdAt, expiresAt
-│   │   │   └── Click.php                 eveniment: code, clickedAt
+│   │   │   ├── Link.php                  aggregate: code, longUrl, createdAt, expiresAt
+│   │   │   └── Click.php                 event: code, clickedAt
 │   │   ├── ValueObject/
 │   │   │   ├── Base62.php                int ↔ 0-9A-Za-z
-│   │   │   └── UrlPolicy.php             doar https, max 2048, fără userinfo / host privat
+│   │   │   └── UrlPolicy.php             https only, max 2048, no userinfo or private host
 │   │   ├── Service/
-│   │   │   ├── ShortenService.php        validare, alocare, insert, cache
-│   │   │   └── RedirectService.php       cache, citire, expirare, publicare click
+│   │   │   ├── ShortenService.php        validate, allocate, insert, cache
+│   │   │   └── RedirectService.php       cache, read, expiry, publish click
 │   │   ├── Repository/
 │   │   │   ├── LinkRepository.php        save, find
 │   │   │   └── LinkCacheRepository.php   set, get, invalidate
@@ -30,61 +30,69 @@ shortUrl/
 │   │       └── DuplicateCode.php
 │   ├── Infrastructure/
 │   │   ├── Persistence/
-│   │   │   ├── PostgresLinkRepository.php   primary la scriere, replica apoi primary la citire
-│   │   │   ├── RedisLinkCacheRepository.php cheie link:{code}, Predis
-│   │   │   └── LinkMapper.php               rând SQL / JSON Redis ↔ Link
+│   │   │   ├── PostgresLinkRepository.php   primary for writes, replica then primary for reads
+│   │   │   ├── RedisLinkCacheRepository.php key link:{code}, Predis
+│   │   │   └── LinkMapper.php               SQL row / Redis JSON ↔ Link
 │   │   ├── Key/
-│   │   │   └── BatchLeaser.php              loturi din key_counter
+│   │   │   └── BatchLeaser.php              batches from key_counter
 │   │   ├── Messaging/
-│   │   │   ├── AmqpClickPublisher.php       coada clicks, circuit breaker
+│   │   │   ├── AmqpClickPublisher.php       queue clicks, circuit breaker
 │   │   │   └── ClickConsumer.php            upsert click_counts
-│   │   └── RedisRateLimiter.php             60 creări / minut / IP
+│   │   └── RedisRateLimiter.php             60 creates / minute / IP
 │   ├── Action/
-│   │   ├── CreateAction.php                 POST /links și POST /shorten
+│   │   ├── CreateAction.php                 POST /links and POST /shorten
 │   │   ├── RedirectAction.php               GET /{code}
-│   │   ├── HealthAction.php                 GET /health
-│   │   └── Json.php
+│   │   └── HealthAction.php                 GET /health
+│   ├── Http/
+│   │   ├── PayloadResponse.php              status and data, no format
+│   │   ├── NegotiateResponseMiddleware.php  picks a writer from Accept
+│   │   ├── Json.php                         Json::write()
+│   │   └── Xml.php                          Xml::write()
 │   ├── OpenApi/
-│   │   └── Spec.php                         Info și schemele OpenAPI
+│   │   ├── Spec.php                         OpenAPI info and schemas
+│   │   └── AcceptHeader.php                 Accept parameter
 │   └── Bootstrap.php
 ├── app/
-│   ├── dependencies.php                     leagă interfețele de implementări
+│   ├── dependencies.php                     binds interfaces to implementations
 │   └── routes.php
 ├── public/
 │   ├── index.php
-│   ├── openapi.json                         generat, nu se editează de mână
+│   ├── openapi.json                         generated, not edited by hand
 │   └── docs/index.html                      Swagger UI
 ├── bin/
 │   ├── worker.php                           ClickConsumer
-│   └── openapi.php                          scanează src/ și scrie public/openapi.json
+│   └── openapi.php                          scans src/ and writes public/openapi.json
 ├── tests/
 │   ├── Base62Test.php
 │   ├── UrlPolicyTest.php
-│   └── LinkTest.php
+│   ├── LinkTest.php
+│   └── ResponseFormatTest.php
 └── deploy/
     ├── postgres/init/01-schema.sql
     ├── nginx/
     └── rabbitmq/
 ```
 
-Nu există strat de use case. `CreateAction` și `RedirectAction` sunt handlere PSR-15 și apelează direct serviciile de domeniu.
+`CreateAction` and `RedirectAction` are PSR-15 handlers and call the domain services directly.
 
-## Dependențe
+## Dependencies
 
 ```
 Action
   → ShortenService / RedirectService
       → UrlPolicy, Link
       → LinkRepository, LinkCacheRepository, KeyLeaser, ClickPublisher
-          ↑ implementate de
+          ↑ implemented by
 Infrastructure
   PostgresLinkRepository, RedisLinkCacheRepository
   BatchLeaser, AmqpClickPublisher
 ```
 
-`app/dependencies.php` face legătura. Domeniul nu importă PDO, Predis sau php-amqplib.
+`app/dependencies.php` wires the interfaces. The domain does not import PDO, Predis, or php-amqplib.
 
-## Date
+Actions return a `PayloadResponse`. `NegotiateResponseMiddleware` reads `Accept` and calls `Json::write()` or `Xml::write()`. A 302 passes through unchanged. `Content-Type` describes the request body, which stays JSON.
+
+## Data
 
 ```sql
 links (code PK, long_url, created_at, expires_at)
@@ -92,11 +100,11 @@ key_counter (id = 1, next_value)
 click_counts (code PK, hits)
 ```
 
-`expires_at` NULL înseamnă că linkul nu expiră. Un rând expirat rămâne în `links` și răspunde 410. Nu există job care să șteargă linkurile expirate. Ștergerea ar transforma același cod în 404, iar `key_counter` nu refolosește numerele.
+`expires_at` NULL means the link does not expire. An expired row stays in `links` and keeps answering 410. `key_counter` never reuses numbers, so deleting the row would turn that code into a 404.
 
-## Coduri
+## Codes
 
-`BatchLeaser` rezervă 1000 de numere într-o singură tranzacție:
+`BatchLeaser` reserves 1000 numbers in one transaction:
 
 ```sql
 UPDATE key_counter
@@ -105,26 +113,26 @@ WHERE id = 1
 RETURNING next_value
 ```
 
-Fiecare număr primește offset-ul `62^6`, apoi `Base62::encode`. Primul cod are 7 caractere. Alfabetul este `0-9A-Za-z`, deci codul este alfanumeric. Coliziunea pe cheia primară (`SQLSTATE 23505`) devine `DuplicateCode`, iar `ShortenService` reîncearcă de până la 3 ori.
+Each number receives the offset `62^6`, then `Base62::encode`. The first code has 7 characters. The alphabet is `0-9A-Za-z`, so the code is alphanumeric. A primary-key collision (`SQLSTATE 23505`) becomes `DuplicateCode`, and `ShortenService` retries up to 3 times.
 
-## Creare
+## Create
 
-`POST /links` și `POST /shorten` fac același lucru.
+`POST /links` and `POST /shorten` do the same work.
 
 ```
 CreateAction
-  RedisRateLimiter.allow("create", IP)     429 dacă s-a depășit limita
+  RedisRateLimiter.allow("create", IP)     429 when the limit is exceeded
   ShortenService.shorten(longUrl, expiresAt)
     UrlPolicy.assertAllowed                400
-    expires_at în trecut                   400
+    expires_at in the past                 400
     BatchLeaser.take()
     Link::create
-    PostgresLinkRepository.save            INSERT, fără căutare după long_url
+    PostgresLinkRepository.save            INSERT, no lookup by long_url
     RedisLinkCacheRepository.set
   201 { code, long_url, short_url, expires_at }
 ```
 
-Body: `long_url` obligatoriu, `expires_at` opțional (ISO-8601). Un `user_id` trimis în body este ignorat.
+Body: `long_url` is required, `expires_at` is optional (ISO-8601). A `user_id` sent in the body is ignored.
 
 ## Redirect
 
@@ -133,29 +141,29 @@ GET /{code}
   RedirectAction
     RedirectService.redirect(code)
       Redis get
-        miss → Postgres replica, apoi primary
-        lipsă → LinkNotFound → 404
+        miss → Postgres replica, then primary
+        missing → LinkNotFound → 404
       Link.isExpired
-        da → Redis DEL → LinkExpired → 410
+        yes → Redis DEL → LinkExpired → 410
       Redis set
-      AmqpClickPublisher.publish(Click)    eșecul nu oprește redirectul
+      AmqpClickPublisher.publish(Click)    a publish failure still returns the redirect
     302 Location + Cache-Control: no-store
 ```
 
-Cache-ul Redis trăiește 24 de ore, sau mai puțin dacă `expires_at` este mai devreme. Linkul din Postgres nu este șters odată cu cheia Redis.
+The Redis cache lives for 24 hours, or less when `expires_at` is sooner. The Postgres row stays when the Redis key disappears.
 
-`bin/worker.php` consumă coada `clicks` (prefetch 20) și face upsert în `click_counts`. Coada este folosită doar pe acest drum. Crearea nu publică nimic.
+`bin/worker.php` consumes the `clicks` queue (prefetch 20) and upserts `click_counts`. The queue is used only on this path. Create publishes nothing.
 
 ## HTTP
 
-| Metodă | Cale | Rezultat |
-|--------|------|----------|
-| GET | `/health` | 200 `{status: ok}` sau 503 `{status: down}` |
+| Method | Path | Result |
+|--------|------|--------|
+| GET | `/health` | 200 `{status: ok}` or 503 `{status: down}` |
 | POST | `/links`, `/shorten` | 201, 400, 429 |
 | GET | `/{code}` | 302, 404, 410 |
 
-Spec-ul este generat din atributele `OpenApi\Attributes` de pe acțiuni și din `src/OpenApi/Spec.php`. `composer openapi` rescrie `public/openapi.json`. Swagger UI este la `/docs/`.
+The spec is generated from `OpenApi\Attributes` on the actions and from `src/OpenApi/`. `composer openapi` rewrites `public/openapi.json`. Swagger UI is at `/docs/`.
 
 ## Runtime
 
-Compose pornește Postgres 16 primary (`5432`) și replica (`5433`), Redis 7, RabbitMQ 3. Profilul `app` pornește API-ul PHP 8.3, worker-ul și NGINX pe `8080`. Schema din `deploy/postgres/init/01-schema.sql` se aplică doar pe un volum gol.
+Compose starts Postgres 16 primary (`5432`) and replica (`5433`), Redis 7, and RabbitMQ 3. The `app` profile starts the PHP 8.5 API, the worker, and NGINX on `8080`. The schema in `deploy/postgres/init/01-schema.sql` applies only to an empty volume.

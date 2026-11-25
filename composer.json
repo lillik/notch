@@ -3,7 +3,7 @@
     "description": "URL shortener API and click worker",
     "type": "project",
     "require": {
-        "php": "^8.3",
+        "php": "^8.5",
         "php-amqplib/php-amqplib": "^3.7",
         "php-di/php-di": "^7.0",
         "predis/predis": "^2.3",
@@ -30,7 +30,7 @@
     },
     "config": {
         "platform": {
-            "php": "8.3.27"
+            "php": "8.5.13"
         }
     }
 }

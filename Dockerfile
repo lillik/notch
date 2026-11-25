@@ -9,7 +9,7 @@ COPY . .
 RUN composer dump-autoload --optimize --no-dev --classmap-authoritative \
     && php bin/openapi.php
 
-FROM php:8.3-fpm-alpine
+FROM php:8.5.13-fpm-alpine
 
 RUN apk add --no-cache nginx curl libpq \
     && apk add --no-cache --virtual .build-deps postgresql-dev linux-headers \

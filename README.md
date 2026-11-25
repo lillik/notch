@@ -4,10 +4,12 @@ Anonymous URL shortener. A Slim 4 API stores an HTTPS address under a new base62
 
 The API, worker, and edge proxy are one Compose profile. Postgres (primary and replica), Redis, and RabbitMQ start with the project.
 
+![URL shortener architecture: browser, NGINX, API, worker, Postgres, Redis, and RabbitMQ](docs/architecture.gif)
+
 ## Requirements
 
 - Docker with Compose v2
-- PHP 8.3 and Composer, only if you run the tests or regenerate the OpenAPI document on the host
+- PHP 8.5 and Composer, only if you run the tests or regenerate the OpenAPI document on the host
 
 ## Run
 
